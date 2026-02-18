@@ -1,0 +1,52 @@
+name: Sync from Upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Every Sunday at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      has_new_commits: ${{ steps.check.outputs.has_new_commits }}
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/MikePopoloski/slang.git
+          git fetch upstream
+
+      - name: Check for new commits
+        id: check
+        run: |
+          NEW=$(git rev-list HEAD..upstream/master --count)
+          echo "New upstream commits: $NEW"
+          echo "has_new_commits=$([ "$NEW" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream
+        if: steps.check.outputs.has_new_commits == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git merge upstream/master --no-edit
+
+      - name: Restore package name after merge
+        if: steps.check.outputs.has_new_commits == 'true'
+        run: |
+          sed -i 's/^name = "pyslang"$/name = "pyslang-dev"/' pyproject.toml
+          if ! git diff --quiet pyproject.toml; then
+            git add pyproject.toml
+            git commit -m "chore: restore pyslang-dev package name after upstream merge"
+          fi
+
+      - name: Push
+        if: steps.check.outputs.has_new_commits == 'true'
+        run: git push origin master
